@@ -47,78 +47,85 @@ function publishRelay(deviceID, state) {
   console.log("Published:", payload);
 }
 
-// ---------------- Scheduler engine ----------------
+// ---------------- Scheduler engine (robust, timezone-aware) ----------------
 
 let lastTriggeredKey = new Set();
 
-function currentTimeString() {
-
-  const now = new Date();
-
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).formatToParts(now);
-
-  const h = parts.find(p => p.type === "hour").value;
-  const m = parts.find(p => p.type === "minute").value;
-
+// returns current time in "HH:mm" for Asia/Kolkata
+function currentTimeStringKolkata() {
+  // build a Date string in IST using toLocaleString with the timezone
+  const nowParts = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' });
+  // nowParts looks like "dd/mm/yyyy, HH:MM:SS"
+  const parts = nowParts.split(',').map(s => s.trim());
+  const timePart = parts[1] || '';
+  const hm = timePart.split(':');
+  if (hm.length < 2) return '';
+  const h = hm[0].padStart(2, '0');
+  const m = hm[1].padStart(2, '0');
   return `${h}:${m}`;
 }
 
-
 async function runSchedulerTick() {
   try {
-    const nowStr = currentTimeString();
+    const nowKolkataStr = currentTimeStringKolkata();
 
-    const snap = await db
-      .collection("schedules")
-      .where("enabled", "==", true)
-      .where("time", "==", nowStr)
-      .get();
+    // debug log so you can see tick times and that scheduler runs
+    console.log(`[scheduler tick] now(IST)=${nowKolkataStr}  local=${new Date().toISOString()}`);
+
+    // load all enabled schedules and check in code (works for small scale, 20-50 devices)
+    const snap = await db.collection("schedules").where("enabled", "==", true).get();
+
+    console.log(`[scheduler] enabled schedules loaded: ${snap.size}`);
 
     for (const doc of snap.docs) {
       const data = doc.data();
 
-      const key = `${doc.id}-${nowStr}`;
+      // validate fields
+      if (!data || !data.time || !data.deviceID || !data.grams) continue;
 
-      // prevent multiple triggers in same minute
-      if (lastTriggeredKey.has(key)) continue;
+      // ensure time formatted as HH:mm
+      const scheduleTime = (data.time || '').toString().padLeft?.call ? data.time : String(data.time);
+      // create a key for dedupe
+      const key = `${doc.id}-${nowKolkataStr}`;
 
-      lastTriggeredKey.add(key);
+      // If this schedule matches current IST minute -> trigger
+      if (scheduleTime === nowKolkataStr) {
 
-      const deviceID = data.deviceID;
-      const grams = data.grams;
+        if (lastTriggeredKey.has(key)) {
+          // already triggered this minute
+          continue;
+        }
 
-      const seconds = gramsToSeconds(Number(grams));
+        lastTriggeredKey.add(key);
 
-      console.log(
-        `Scheduled feed -> ${deviceID} at ${nowStr} for ${seconds}s`
-      );
+        const deviceID = data.deviceID;
+        const grams = Number(data.grams);
+        const seconds = gramsToSeconds(grams);
 
-      // ON
-      publishRelay(deviceID, 1);
+        console.log(`Scheduled feed -> ${deviceID} at ${nowKolkataStr} for ${seconds}s (doc=${doc.id})`);
 
-      // log
-      await db.collection("feed_logs").add({
-        deviceID,
-        grams,
-        startedAt: admin.firestore.FieldValue.serverTimestamp(),
-        mode: "schedule",
-        scheduleId: doc.id,
-      });
+        // ON
+        publishRelay(deviceID, 1);
 
-      // OFF
-      setTimeout(() => {
-        publishRelay(deviceID, 0);
-      }, Math.round(seconds * 1000));
+        // log
+        await db.collection("feed_logs").add({
+          deviceID,
+          grams,
+          startedAt: admin.firestore.FieldValue.serverTimestamp(),
+          mode: "schedule",
+          scheduleId: doc.id,
+        });
+
+        // OFF after required seconds
+        setTimeout(() => {
+          publishRelay(deviceID, 0);
+        }, Math.round(seconds * 1000));
+      }
     }
 
     // clean old keys (keep only current minute keys)
-    for (const k of lastTriggeredKey) {
-      if (!k.endsWith(nowStr)) {
+    for (const k of Array.from(lastTriggeredKey)) {
+      if (!k.endsWith(nowKolkataStr)) {
         lastTriggeredKey.delete(k);
       }
     }
