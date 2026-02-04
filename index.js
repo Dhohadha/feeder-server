@@ -84,7 +84,8 @@ async function runSchedulerTick() {
       if (!data || !data.time || !data.deviceID || !data.grams) continue;
 
       // ensure time formatted as HH:mm
-      const scheduleTime = (data.time || '').toString().padLeft?.call ? data.time : String(data.time);
+      const scheduleTime = String(data.time).padStart(5, '0');
+
       // create a key for dedupe
       const key = `${doc.id}-${nowKolkataStr}`;
 
