@@ -205,6 +205,11 @@ app.post("/dispense-now", async (req, res) => {
   }
 });
 
+app.post("/run-scheduler", async (req, res) => {
+  await runSchedulerTick();
+  res.json({ status: "scheduler tick executed" });
+});
+
 // ---------------- Health endpoint ----------------
 
 app.get("/health", (req, res) => {
