@@ -52,11 +52,22 @@ function publishRelay(deviceID, state) {
 let lastTriggeredKey = new Set();
 
 function currentTimeString() {
+
   const now = new Date();
-  const h = now.getHours().toString().padStart(2, "0");
-  const m = now.getMinutes().toString().padStart(2, "0");
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+
+  const h = parts.find(p => p.type === "hour").value;
+  const m = parts.find(p => p.type === "minute").value;
+
   return `${h}:${m}`;
 }
+
 
 async function runSchedulerTick() {
   try {
